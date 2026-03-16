@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Infrastructure Cost Visualizer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <p class="kicker">Infrastructure Planning</p>
+        <h1>Infrastructure Cost Visualizer</h1>
+        <p class="subtitle">
+          Estimate monthly infrastructure spend, compare pricing models, and review a simple
+          12-month forecast.
+        </p>
+        <div class="scenario-strip">
+          <label class="field-inline scenario-field">
+            <span>Scenario</span>
+            <input id="scenarioName" class="input" type="text" value="Q2 Production" />
+          </label>
+          <label class="field-inline scenario-field">
+            <span>Budget / Month</span>
+            <input id="monthlyBudget" class="input" type="number" min="0" step="100" value="8000" />
+          </label>
+          <p id="scenarioTag" class="scenario-tag">Balanced Growth Profile</p>
+        </div>
+      </header>
+
+      <section class="panel controls">
+        <div class="controls-top">
+          <h2>Cost Inputs</h2>
+          <div class="toolbar">
+            <label class="field-inline">
+              <span>Currency</span>
+              <select id="currencySelect" aria-label="Currency selector">
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
+              </select>
+            </label>
+            <button id="addRowBtn" class="btn btn-primary">Add Resource</button>
+            <button id="importBtn" class="btn btn-ghost" type="button">Import CSV</button>
+            <button id="exportBtn" class="btn btn-ghost" type="button">Export CSV</button>
+            <button id="resetBtn" class="btn btn-ghost">Reset</button>
+            <input id="importFile" type="file" accept=".csv,text/csv" hidden />
+          </div>
+        </div>
+
+        <div class="preset-row" aria-label="Quick templates">
+          <p class="preset-label">Starter Scenarios</p>
+          <div class="preset-actions">
+            <button id="presetSaas" class="btn btn-pill" type="button">SaaS App Stack</button>
+            <button id="presetData" class="btn btn-pill" type="button">Data Platform</button>
+            <button id="presetEdge" class="btn btn-pill" type="button">Edge API</button>
+          </div>
+        </div>
+
+        <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Drop CSV file here to import">
+          Drop CSV here or click to upload
+        </div>
+        <p id="importStatus" class="import-status" aria-live="polite"></p>
+
+        <div class="table-wrap">
+          <table id="resourceTable">
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th>Category</th>
+                <th>Model</th>
+                <th>Qty</th>
+                <th>Units / Month</th>
+                <th>Unit Price</th>
+                <th>Discount %</th>
+                <th>Monthly Cost</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="resourceBody"></tbody>
+          </table>
+        </div>
+        <p id="healthNote" class="helper-note">Tip: validate assumptions against at least one real billing report.</p>
+      </section>
+
+      <section class="summary">
+        <article class="metric-card">
+          <p>Total Monthly</p>
+          <h3 id="monthlyTotal">$0.00</h3>
+        </article>
+        <article class="metric-card">
+          <p>Total Annual</p>
+          <h3 id="annualTotal">$0.00</h3>
+        </article>
+        <article class="metric-card">
+          <p>Most Expensive Category</p>
+          <h3 id="topCategory">-</h3>
+        </article>
+        <article class="metric-card">
+          <p>Resource Count</p>
+          <h3 id="resourceCount">0</h3>
+        </article>
+        <article class="metric-card metric-pulse">
+          <p>Budget Delta</p>
+          <h3 id="budgetDelta">$0.00</h3>
+        </article>
+      </section>
+
+      <section class="panel charts">
+        <article class="chart-card">
+          <div class="chart-header">
+            <h2>Spend by Category</h2>
+          </div>
+          <div id="categoryBars" class="bars"></div>
+        </article>
+
+        <article class="chart-card">
+          <div class="chart-header">
+            <h2>Pricing Model Split</h2>
+          </div>
+          <canvas id="modelDonut" width="360" height="260" aria-label="Pricing model donut chart"></canvas>
+          <div id="donutLegend" class="legend"></div>
+        </article>
+
+        <article class="chart-card chart-wide">
+          <div class="chart-header">
+            <h2>12-Month Forecast</h2>
+            <label class="field-inline compact">
+              <span>Monthly Growth</span>
+              <input id="growthRate" type="range" min="-10" max="25" step="1" value="4" />
+              <output id="growthValue">4%</output>
+            </label>
+          </div>
+          <p id="forecastTag" class="helper-note chart-note">Projected month-12 total: $0.00</p>
+          <canvas id="forecastLine" class="forecast-canvas" width="920" height="300" aria-label="12-month forecast chart"></canvas>
+        </article>
+      </section>
+
+      <section class="panel insights">
+        <div class="chart-header">
+          <h2>Recommendations</h2>
+        </div>
+        <ul id="recommendationList" class="recommendation-list"></ul>
+      </section>
+    </main>
+
+    <footer class="page-footnote">
+      <p>Values are stored in your browser for local planning.</p>
+    </footer>
+
+    <template id="rowTemplate">
+      <tr>
+        <td><input class="input service" type="text" value="Compute Node" /></td>
+        <td>
+          <select class="input category">
+            <option>Compute</option>
+            <option>Storage</option>
+            <option>Database</option>
+            <option>Networking</option>
+            <option>Monitoring</option>
+            <option>Security</option>
+            <option>Other</option>
+          </select>
+        </td>
+        <td>
+          <select class="input model">
+            <option value="on-demand">On-Demand</option>
+            <option value="reserved">Reserved</option>
+            <option value="spot">Spot</option>
+          </select>
+        </td>
+        <td><input class="input qty" type="number" min="0" step="1" value="1" /></td>
+        <td><input class="input units" type="number" min="0" step="1" value="730" /></td>
+        <td><input class="input price" type="number" min="0" step="0.0001" value="0.12" /></td>
+        <td><input class="input discount" type="number" min="0" max="100" step="1" value="0" /></td>
+        <td class="cost-cell">$0.00</td>
+        <td>
+          <button class="btn-icon remove" aria-label="Remove resource" title="Remove resource">x</button>
+        </td>
+      </tr>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
