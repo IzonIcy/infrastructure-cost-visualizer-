@@ -18,6 +18,7 @@ Hosted URL: `Add deployed site URL here`
 - 12-month forecast with adjustable growth rate and month-12 projection callout
 - Currency toggle (`USD`, `EUR`, `GBP`)
 - Local state persistence in browser `localStorage`
+- Optional backend API to save/load scenarios
 
 ## Quick Start
 
@@ -34,6 +35,33 @@ npx serve .
 ```
 
 Then open the printed URL.
+
+## Backend (Optional)
+
+This repo also includes an optional Node/Express backend that:
+
+- Serves the static frontend
+- Provides a small API to persist scenarios on disk (so you can save/load scenarios)
+
+### Run
+
+```bash
+npm install
+npm run dev
+```
+
+Then open `http://localhost:3000`.
+
+### API
+
+- `GET /api/health` → `{ ok: true }`
+- `GET /api/scenarios` → list scenarios (metadata)
+- `POST /api/scenarios` → create scenario
+- `GET /api/scenarios/:id` → fetch scenario
+- `PATCH /api/scenarios/:id` → update scenario
+- `DELETE /api/scenarios/:id` → delete scenario
+
+Scenarios are stored in `data/scenarios.json` (ignored by git).
 
 ## Formula
 

@@ -56,6 +56,8 @@ const els = {
   dropZone: document.getElementById("dropZone"),
   importStatus: document.getElementById("importStatus"),
   recommendationList: document.getElementById("recommendationList"),
+  saveServerBtn: document.getElementById("saveServerBtn"),
+  loadServerBtn: document.getElementById("loadServerBtn"),
 };
 
 const csvRequiredHeaders = ["service", "category", "model", "qty", "units", "price", "discount"];
@@ -64,6 +66,103 @@ function setImportStatus(message, type = "") {
   els.importStatus.textContent = message;
   els.importStatus.classList.remove("error", "success");
   if (type) els.importStatus.classList.add(type);
+}
+
+function isServedOverHttp() {
+  return window.location.protocol === "http:" || window.location.protocol === "https:";
+}
+
+async function apiFetch(path, options) {
+  if (!isServedOverHttp()) {
+    throw new Error("Run the app via `npm run dev` to use Save/Load (backend API isn't available from a file:// page).");
+  }
+
+  const res = await fetch(path, {
+    headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
+    ...options,
+  });
+
+  if (res.status === 204) return null;
+
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+
+  if (!res.ok) {
+    const msg = body?.error || `Request failed (${res.status})`;
+    throw new Error(msg);
+  }
+
+  return body;
+}
+
+function buildScenarioPayloadFromUi() {
+  return {
+    name: (els.scenarioName.value || "").trim() || "Custom",
+    currency: els.currencySelect.value,
+    growthRate: Number(els.growthRate.value),
+    monthlyBudget: Number(els.monthlyBudget.value) || 0,
+    rows: getRowsFromUI(),
+  };
+}
+
+async function saveScenarioToServer() {
+  els.saveServerBtn.disabled = true;
+  try {
+    const payload = buildScenarioPayloadFromUi();
+    await apiFetch("/api/scenarios", { method: "POST", body: JSON.stringify(payload) });
+    setImportStatus("Saved to server.", "success");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Save failed.";
+    setImportStatus(message, "error");
+  } finally {
+    els.saveServerBtn.disabled = false;
+  }
+}
+
+async function loadScenarioFromServer() {
+  els.loadServerBtn.disabled = true;
+  try {
+    const list = await apiFetch("/api/scenarios", { method: "GET" });
+    const items = list?.items || [];
+    if (!items.length) {
+      setImportStatus("No saved scenarios on the server yet.", "error");
+      return;
+    }
+
+    const choices = items
+      .slice(0, 20)
+      .map((x, i) => `${i + 1}. ${x.name} (${x.id.slice(0, 8)})`)
+      .join("\n");
+    const input = window.prompt(
+      `Choose a scenario to load:\n\n${choices}\n\nEnter 1-${Math.min(items.length, 20)}:`
+    );
+    const idx = Number(input);
+    if (!Number.isFinite(idx) || idx < 1 || idx > Math.min(items.length, 20)) return;
+
+    const chosen = items[idx - 1];
+    const detail = await apiFetch(`/api/scenarios/${chosen.id}`, { method: "GET" });
+    const scenario = detail?.item;
+    if (!scenario) throw new Error("Scenario not found.");
+
+    els.resourceBody.innerHTML = "";
+    (scenario.rows || []).forEach(addRow);
+    els.scenarioName.value = scenario.name || "Custom";
+    els.currencySelect.value = scenario.currency || "USD";
+    els.growthRate.value = String(scenario.growthRate ?? 4);
+    els.monthlyBudget.value = String(scenario.monthlyBudget ?? 0);
+    recalculateAndRender();
+
+    setImportStatus("Loaded from server.", "success");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Load failed.";
+    setImportStatus(message, "error");
+  } finally {
+    els.loadServerBtn.disabled = false;
+  }
 }
 
 function csvEscape(value) {
@@ -735,6 +834,8 @@ els.presetData.addEventListener("click", () => applyPreset("data"));
 els.presetEdge.addEventListener("click", () => applyPreset("edge"));
 els.exportBtn.addEventListener("click", exportRowsAsCsv);
 els.importBtn.addEventListener("click", () => els.importFile.click());
+els.saveServerBtn.addEventListener("click", saveScenarioToServer);
+els.loadServerBtn.addEventListener("click", loadScenarioFromServer);
 els.dropZone.addEventListener("click", () => els.importFile.click());
 els.dropZone.addEventListener("keydown", (event) => {
   if (event.key === "Enter" || event.key === " ") {
