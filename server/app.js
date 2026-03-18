@@ -24,6 +24,9 @@ export function createApp({ repoRoot }) {
 
   app.use("/api/scenarios", createScenariosRouter({ repoRoot }));
 
+  // Serve node_modules for browser imports
+  app.use('/node_modules', express.static(path.join(repoRoot, 'node_modules')));
+
   app.use(express.static(repoRoot, { extensions: ["html"] }));
 
   app.use((req, res) => {
