@@ -1,4 +1,29 @@
 const STORAGE_KEY = "infra-cost-visualizer-state";
+const BASE_CURRENCY = "USD";
+const DEFAULT_SCENARIO_NAME = "Q2 Production";
+const DEFAULT_MONTHLY_BUDGET_USD = 8000;
+const DEFAULT_GROWTH_RATE = 4;
+
+const CATEGORY_OPTIONS = [
+  "Compute",
+  "Storage",
+  "Database",
+  "Networking",
+  "Monitoring",
+  "Security",
+  "Other",
+];
+
+const MODEL_OPTIONS = ["on-demand", "reserved", "spot"];
+
+const CSV_REQUIRED_HEADERS = ["service", "category", "model", "qty", "units", "price", "discount"];
+const CSV_HEADERS = [...CSV_REQUIRED_HEADERS, "currency"];
+
+const exchangeRates = {
+  USD: 1,
+  EUR: 0.92,
+  GBP: 0.78,
+};
 
 const modelMultipliers = {
   "on-demand": 1,
@@ -6,24 +31,19 @@ const modelMultipliers = {
   spot: 0.35,
 };
 
-const currencySymbols = {
-  USD: "$",
-  EUR: "EUR ",
-  GBP: "GBP ",
-};
-
-// Approximate exchange rates relative to USD for quick scenario planning.
-const exchangeRates = {
-  USD: 1,
-  EUR: 0.92,
-  GBP: 0.78,
-};
-
 const modelColors = {
-  "on-demand": "#326ea8",
-  reserved: "#6d8fb4",
-  spot: "#9aaec6",
+  "on-demand": "#35566d",
+  reserved: "#a55a32",
+  spot: "#6f8265",
 };
+
+const categorySwatches = [
+  ["#35566d", "#54718a"],
+  ["#a55a32", "#c17a52"],
+  ["#6f8265", "#90a384"],
+  ["#7f6475", "#a37d98"],
+  ["#907242", "#b6935f"],
+];
 
 const els = {
   rowTemplate: document.getElementById("rowTemplate"),
@@ -60,262 +80,8 @@ const els = {
   loadServerBtn: document.getElementById("loadServerBtn"),
 };
 
-const csvRequiredHeaders = ["service", "category", "model", "qty", "units", "price", "discount"];
-
-function setImportStatus(message, type = "") {
-  els.importStatus.textContent = message;
-  els.importStatus.classList.remove("error", "success");
-  if (type) els.importStatus.classList.add(type);
-}
-
-function isServedOverHttp() {
-  return window.location.protocol === "http:" || window.location.protocol === "https:";
-}
-
-async function apiFetch(path, options) {
-  if (!isServedOverHttp()) {
-    throw new Error("Run the app via `npm run dev` to use Save/Load (backend API isn't available from a file:// page).");
-  }
-
-  const res = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
-    ...options,
-  });
-
-  if (res.status === 204) return null;
-
-  let body;
-  try {
-    body = await res.json();
-  } catch {
-    body = null;
-  }
-
-  if (!res.ok) {
-    const msg = body?.error || `Request failed (${res.status})`;
-    throw new Error(msg);
-  }
-
-  return body;
-}
-
-function buildScenarioPayloadFromUi() {
-  return {
-    name: (els.scenarioName.value || "").trim() || "Custom",
-    currency: els.currencySelect.value,
-    growthRate: Number(els.growthRate.value),
-    monthlyBudget: Number(els.monthlyBudget.value) || 0,
-    rows: getRowsFromUI(),
-  };
-}
-
-async function saveScenarioToServer() {
-  els.saveServerBtn.disabled = true;
-  try {
-    const payload = buildScenarioPayloadFromUi();
-    await apiFetch("/api/scenarios", { method: "POST", body: JSON.stringify(payload) });
-    setImportStatus("Saved to server.", "success");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Save failed.";
-    setImportStatus(message, "error");
-  } finally {
-    els.saveServerBtn.disabled = false;
-  }
-}
-
-async function loadScenarioFromServer() {
-  els.loadServerBtn.disabled = true;
-  try {
-    const list = await apiFetch("/api/scenarios", { method: "GET" });
-    const items = list?.items || [];
-    if (!items.length) {
-      setImportStatus("No saved scenarios on the server yet.", "error");
-      return;
-    }
-
-    const choices = items
-      .slice(0, 20)
-      .map((x, i) => `${i + 1}. ${x.name} (${x.id.slice(0, 8)})`)
-      .join("\n");
-    const input = window.prompt(
-      `Choose a scenario to load:\n\n${choices}\n\nEnter 1-${Math.min(items.length, 20)}:`
-    );
-    const idx = Number(input);
-    if (!Number.isFinite(idx) || idx < 1 || idx > Math.min(items.length, 20)) return;
-
-    const chosen = items[idx - 1];
-    const detail = await apiFetch(`/api/scenarios/${chosen.id}`, { method: "GET" });
-    const scenario = detail?.item;
-    if (!scenario) throw new Error("Scenario not found.");
-
-    els.resourceBody.innerHTML = "";
-    (scenario.rows || []).forEach(addRow);
-    els.scenarioName.value = scenario.name || "Custom";
-    els.currencySelect.value = scenario.currency || "USD";
-    els.growthRate.value = String(scenario.growthRate ?? 4);
-    els.monthlyBudget.value = String(scenario.monthlyBudget ?? 0);
-    recalculateAndRender();
-
-    setImportStatus("Loaded from server.", "success");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Load failed.";
-    setImportStatus(message, "error");
-  } finally {
-    els.loadServerBtn.disabled = false;
-  }
-}
-
-function csvEscape(value) {
-  const raw = String(value ?? "");
-  if (raw.includes(",") || raw.includes("\"") || raw.includes("\n")) {
-    return `"${raw.replace(/\"/g, '""')}"`;
-  }
-  return raw;
-}
-
-function exportRowsAsCsv() {
-  const rows = getRowsFromUI();
-  const headers = ["service", "category", "model", "qty", "units", "price", "discount"];
-  const lines = [headers.join(",")];
-
-  rows.forEach((row) => {
-    lines.push(
-      headers
-        .map((key) => csvEscape(row[key]))
-        .join(",")
-    );
-  });
-
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "infrastructure-costs.csv";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-function parseCsvLine(line) {
-  const out = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i];
-    const next = line[i + 1];
-
-    if (char === '"') {
-      if (inQuotes && next === '"') {
-        current += '"';
-        i += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (char === "," && !inQuotes) {
-      out.push(current);
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-
-  out.push(current);
-  return out;
-}
-
-function importRowsFromCsv(content) {
-  const lines = content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  if (lines.length < 2) {
-    throw new Error("CSV is empty or missing row data.");
-  }
-
-  const headers = parseCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
-  const index = (name) => headers.indexOf(name);
-  const missingHeaders = csvRequiredHeaders.filter((key) => index(key) === -1);
-  if (missingHeaders.length > 0) {
-    throw new Error(`Missing required columns: ${missingHeaders.join(", ")}.`);
-  }
-
-  const importedRows = lines.slice(1).map((line) => {
-    const cols = parseCsvLine(line);
-    return {
-      service: cols[index("service")] || "Imported Service",
-      category: cols[index("category")] || "Other",
-      model: cols[index("model")] || "on-demand",
-      qty: Number(cols[index("qty")]) || 0,
-      units: Number(cols[index("units")]) || 0,
-      price: Number(cols[index("price")]) || 0,
-      discount: Number(cols[index("discount")]) || 0,
-    };
-  });
-
-  if (!importedRows.length) {
-    throw new Error("No valid data rows were found.");
-  }
-
-  els.resourceBody.innerHTML = "";
-  importedRows.forEach(addRow);
-  recalculateAndRender();
-  setImportStatus(`Imported ${importedRows.length} row(s) successfully.`, "success");
-}
-
-async function handleImportFile(file) {
-  if (!file) return;
-
-  const fileName = (file.name || "").toLowerCase();
-  const looksLikeCsv = fileName.endsWith(".csv") || file.type.includes("csv");
-  if (!looksLikeCsv) {
-    setImportStatus("Please upload a CSV file.", "error");
-    return;
-  }
-
-  try {
-    const text = await file.text();
-    importRowsFromCsv(text);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Import failed. Please check the CSV format.";
-    setImportStatus(message, "error");
-  }
-}
-
-function renderRecommendations(rows, monthlyUsd, topCategory, deltaUsd) {
-  const tips = [];
-
-  if (rows.length === 0) {
-    tips.push("Add at least one resource to generate recommendations.");
-  }
-
-  if (topCategory && monthlyUsd > 0) {
-    const share = Math.round((topCategory[1] / monthlyUsd) * 100);
-    tips.push(`${topCategory[0]} is the main cost driver at ${share}% of monthly spend.`);
-  }
-
-  if (deltaUsd > 0) {
-    tips.push("Current plan is over budget. Focus on high-volume compute and network workloads first.");
-  } else {
-    tips.push("Current plan is within budget. Consider reserving stable workloads for additional savings.");
-  }
-
-  const onDemandRows = rows.filter((r) => r.model === "on-demand");
-  if (onDemandRows.length > 0) {
-    const heavyOnDemand = [...onDemandRows]
-      .sort((a, b) => monthlyCost(b) - monthlyCost(a))[0];
-    tips.push(`Largest on-demand item: ${heavyOnDemand.service}. Evaluate reserved pricing for this service.`);
-  }
-
-  els.recommendationList.innerHTML = "";
-  tips.slice(0, 4).forEach((tip) => {
-    const li = document.createElement("li");
-    li.textContent = tip;
-    els.recommendationList.appendChild(li);
-  });
-}
+let currentDisplayCurrency = BASE_CURRENCY;
+let resizeTimer;
 
 const presets = {
   saas: {
@@ -356,6 +122,550 @@ const presets = {
   },
 };
 
+function toNumber(value, fallback = 0) {
+  const normalized = typeof value === "string" ? value.replace(/,/g, "") : value;
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function roundTo(value, decimals = 2) {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
+function formatCurrency(amount, currency) {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function formatInputNumber(value, maxFractionDigits = 2) {
+  return toNumber(value).toLocaleString(undefined, {
+    useGrouping: false,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: maxFractionDigits,
+  });
+}
+
+function convertCurrency(amount, fromCurrency, toCurrency) {
+  const safeFrom = exchangeRates[fromCurrency] ? fromCurrency : BASE_CURRENCY;
+  const safeTo = exchangeRates[toCurrency] ? toCurrency : BASE_CURRENCY;
+  const usdAmount = toNumber(amount) / exchangeRates[safeFrom];
+  return usdAmount * exchangeRates[safeTo];
+}
+
+function toBaseCurrency(amount, fromCurrency = currentDisplayCurrency) {
+  return convertCurrency(amount, fromCurrency, BASE_CURRENCY);
+}
+
+function fromBaseCurrency(amount, toCurrency = currentDisplayCurrency) {
+  return convertCurrency(amount, BASE_CURRENCY, toCurrency);
+}
+
+function sanitizeText(value, fallback, maxLength) {
+  const cleaned = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+  return cleaned || fallback;
+}
+
+function normalizeChoice(value, options, fallback) {
+  return options.includes(value) ? value : fallback;
+}
+
+function normalizeRow(row, { currency = currentDisplayCurrency, amountsInBaseCurrency = false } = {}) {
+  const priceValue = Math.max(0, toNumber(row?.price));
+  return {
+    service: sanitizeText(row?.service, "Untitled service", 120),
+    category: normalizeChoice(row?.category, CATEGORY_OPTIONS, "Other"),
+    model: normalizeChoice(row?.model, MODEL_OPTIONS, "on-demand"),
+    qty: clamp(toNumber(row?.qty), 0, 1_000_000),
+    units: clamp(toNumber(row?.units), 0, 1_000_000),
+    price: amountsInBaseCurrency ? priceValue : Math.max(0, toBaseCurrency(priceValue, currency)),
+    discount: clamp(toNumber(row?.discount), 0, 100),
+  };
+}
+
+function normalizeRows(rows, options = {}) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row) => normalizeRow(row, options));
+}
+
+function sanitizeScenarioName(name) {
+  return sanitizeText(name, DEFAULT_SCENARIO_NAME, 80);
+}
+
+function buildScenarioFileName(name) {
+  const slug = sanitizeScenarioName(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "scenario";
+}
+
+function formatDateLabel(isoString) {
+  if (!isoString) return "";
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function getDefaultRows() {
+  return normalizeRows(
+    [
+      {
+        service: "Compute Node",
+        category: "Compute",
+        model: "on-demand",
+        qty: 6,
+        units: 730,
+        price: 0.14,
+        discount: 0,
+      },
+      {
+        service: "Object Storage",
+        category: "Storage",
+        model: "reserved",
+        qty: 18,
+        units: 1,
+        price: 23,
+        discount: 5,
+      },
+      {
+        service: "Managed Database",
+        category: "Database",
+        model: "on-demand",
+        qty: 2,
+        units: 730,
+        price: 0.55,
+        discount: 0,
+      },
+      {
+        service: "CDN Egress",
+        category: "Networking",
+        model: "spot",
+        qty: 12,
+        units: 100,
+        price: 0.09,
+        discount: 0,
+      },
+    ],
+    { amountsInBaseCurrency: true }
+  );
+}
+
+function setImportStatus(message, type = "") {
+  els.importStatus.textContent = message;
+  els.importStatus.classList.remove("error", "success");
+  if (type) els.importStatus.classList.add(type);
+}
+
+function isServedOverHttp() {
+  return window.location.protocol === "http:" || window.location.protocol === "https:";
+}
+
+async function apiFetch(path, options) {
+  if (!isServedOverHttp()) {
+    throw new Error("Run the app with `npm run dev` to use save and load.");
+  }
+
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
+    ...options,
+  });
+
+  if (response.status === 204) return null;
+
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(body?.error || `Request failed (${response.status})`);
+  }
+
+  return body;
+}
+
+function readBudgetFromUi(currency = currentDisplayCurrency) {
+  const displayValue = Math.max(0, toNumber(els.monthlyBudget.value));
+  return toBaseCurrency(displayValue, currency);
+}
+
+function setBudgetInput(budgetUsd, currency = currentDisplayCurrency) {
+  const displayAmount = fromBaseCurrency(Math.max(0, toNumber(budgetUsd)), currency);
+  els.monthlyBudget.value = formatInputNumber(roundTo(displayAmount, 2), 2);
+}
+
+function buildScenarioPayloadFromUi() {
+  return {
+    name: sanitizeScenarioName(els.scenarioName.value),
+    currency: currentDisplayCurrency,
+    growthRate: clamp(toNumber(els.growthRate.value, DEFAULT_GROWTH_RATE), -10, 25),
+    monthlyBudget: readBudgetFromUi(currentDisplayCurrency),
+    rows: getRowsFromUI({ currency: currentDisplayCurrency }),
+  };
+}
+
+async function saveScenarioToServer() {
+  els.saveServerBtn.disabled = true;
+  try {
+    const payload = buildScenarioPayloadFromUi();
+    const response = await apiFetch("/api/scenarios", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    setImportStatus(`Saved "${response?.item?.name || payload.name}" to the local server.`, "success");
+  } catch (error) {
+    setImportStatus(error instanceof Error ? error.message : "Save failed.", "error");
+  } finally {
+    els.saveServerBtn.disabled = false;
+  }
+}
+
+async function loadScenarioFromServer() {
+  els.loadServerBtn.disabled = true;
+  try {
+    const list = await apiFetch("/api/scenarios");
+    const items = Array.isArray(list?.items) ? list.items : [];
+
+    if (!items.length) {
+      setImportStatus("No saved scenarios are available on the local server yet.", "error");
+      return;
+    }
+
+    const visibleItems = items.slice(0, 20);
+    const choices = visibleItems
+      .map((item, index) => {
+        const updated = formatDateLabel(item.updatedAt || item.createdAt);
+        return `${index + 1}. ${item.name}${updated ? ` (${updated})` : ""}`;
+      })
+      .join("\n");
+
+    const response = window.prompt(
+      `Choose a saved scenario:\n\n${choices}\n\nEnter 1-${visibleItems.length}:`
+    );
+
+    if (response === null) return;
+
+    const choice = Number(response);
+    if (!Number.isFinite(choice) || choice < 1 || choice > visibleItems.length) {
+      throw new Error("Enter a valid scenario number.");
+    }
+
+    const selected = visibleItems[choice - 1];
+    const detail = await apiFetch(`/api/scenarios/${selected.id}`);
+    const scenario = detail?.item;
+
+    if (!scenario) {
+      throw new Error("That saved scenario could not be loaded.");
+    }
+
+    applyScenarioState({
+      scenarioName: scenario.name,
+      monthlyBudget: scenario.monthlyBudget,
+      growthRate: scenario.growthRate,
+      currency: scenario.currency,
+      rows: scenario.rows,
+    });
+
+    setImportStatus(`Loaded "${scenario.name}" from the local server.`, "success");
+  } catch (error) {
+    setImportStatus(error instanceof Error ? error.message : "Load failed.", "error");
+  } finally {
+    els.loadServerBtn.disabled = false;
+  }
+}
+
+function csvEscape(value) {
+  const raw = String(value ?? "");
+  if (/[",\n\r]/.test(raw)) {
+    return `"${raw.replace(/"/g, '""')}"`;
+  }
+  return raw;
+}
+
+function parseCsvContent(content) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    const next = content[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        field += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (!inQuotes && char === ",") {
+      row.push(field);
+      field = "";
+      continue;
+    }
+
+    if (!inQuotes && (char === "\n" || char === "\r")) {
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+      row.push(field);
+      if (row.some((cell) => String(cell).trim() !== "")) {
+        rows.push(row);
+      }
+      row = [];
+      field = "";
+      continue;
+    }
+
+    field += char;
+  }
+
+  if (inQuotes) {
+    throw new Error("CSV contains an unterminated quoted field.");
+  }
+
+  if (field !== "" || row.length) {
+    row.push(field);
+    if (row.some((cell) => String(cell).trim() !== "")) {
+      rows.push(row);
+    }
+  }
+
+  return rows;
+}
+
+function exportRowsAsCsv() {
+  const rows = getDisplayRowsFromUI().map((row) => ({ ...row, currency: currentDisplayCurrency }));
+  const lines = [CSV_HEADERS.join(",")];
+
+  rows.forEach((row) => {
+    lines.push(CSV_HEADERS.map((key) => csvEscape(row[key])).join(","));
+  });
+
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${buildScenarioFileName(els.scenarioName.value)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function importRowsFromCsv(content) {
+  const parsedRows = parseCsvContent(content);
+  if (parsedRows.length < 2) {
+    throw new Error("CSV is empty or missing row data.");
+  }
+
+  const headers = parsedRows[0].map((cell) => String(cell).trim().toLowerCase());
+  const headerIndex = (name) => headers.indexOf(name);
+  const missingHeaders = CSV_REQUIRED_HEADERS.filter((name) => headerIndex(name) === -1);
+
+  if (missingHeaders.length > 0) {
+    throw new Error(`Missing required columns: ${missingHeaders.join(", ")}.`);
+  }
+
+  const importedRows = parsedRows
+    .slice(1)
+    .map((cols) => {
+      const rawRow = {
+        service: cols[headerIndex("service")] ?? "",
+        category: cols[headerIndex("category")] ?? "",
+        model: cols[headerIndex("model")] ?? "",
+        qty: cols[headerIndex("qty")] ?? "",
+        units: cols[headerIndex("units")] ?? "",
+        price: cols[headerIndex("price")] ?? "",
+        discount: cols[headerIndex("discount")] ?? "",
+      };
+
+      const hasContent = Object.values(rawRow).some((value) => String(value).trim() !== "");
+      if (!hasContent) return null;
+
+      const fileCurrency = String(cols[headerIndex("currency")] ?? "")
+        .trim()
+        .toUpperCase();
+      const rowCurrency = exchangeRates[fileCurrency] ? fileCurrency : currentDisplayCurrency;
+
+      return normalizeRow(rawRow, { currency: rowCurrency });
+    })
+    .filter(Boolean);
+
+  if (!importedRows.length) {
+    throw new Error("No valid data rows were found.");
+  }
+
+  renderRows(importedRows);
+  recalculateAndRender();
+  setImportStatus(`Imported ${importedRows.length} row(s) from CSV.`, "success");
+}
+
+async function handleImportFile(file) {
+  if (!file) return;
+
+  const fileName = String(file.name || "").toLowerCase();
+  const looksLikeCsv = fileName.endsWith(".csv") || String(file.type || "").includes("csv");
+
+  if (!looksLikeCsv) {
+    setImportStatus("Please choose a CSV file.", "error");
+    return;
+  }
+
+  try {
+    const text = await file.text();
+    importRowsFromCsv(text);
+  } catch (error) {
+    setImportStatus(
+      error instanceof Error ? error.message : "Import failed. Please check the CSV format.",
+      "error"
+    );
+  }
+}
+
+function modelLabel(model) {
+  if (model === "on-demand") return "On-Demand";
+  if (model === "reserved") return "Reserved";
+  if (model === "spot") return "Spot";
+  return "Other";
+}
+
+function readDisplayRow(tr) {
+  const value = (selector) => tr.querySelector(selector).value;
+  return {
+    service: sanitizeText(value(".service"), "Untitled service", 120),
+    category: normalizeChoice(value(".category"), CATEGORY_OPTIONS, "Other"),
+    model: normalizeChoice(value(".model"), MODEL_OPTIONS, "on-demand"),
+    qty: clamp(toNumber(value(".qty")), 0, 1_000_000),
+    units: clamp(toNumber(value(".units")), 0, 1_000_000),
+    price: Math.max(0, toNumber(value(".price"))),
+    discount: clamp(toNumber(value(".discount")), 0, 100),
+  };
+}
+
+function readRow(tr, { currency = currentDisplayCurrency } = {}) {
+  return normalizeRow(readDisplayRow(tr), { currency });
+}
+
+function monthlyCost(row) {
+  const base = row.qty * row.units * row.price;
+  const discountFactor = 1 - clamp(row.discount, 0, 100) / 100;
+  const modelFactor = modelMultipliers[row.model] ?? 1;
+  return base * discountFactor * modelFactor;
+}
+
+function formatDisplayPrice(usdPrice) {
+  const displayPrice = fromBaseCurrency(usdPrice, currentDisplayCurrency);
+  const decimals = displayPrice !== 0 && Math.abs(displayPrice) < 1 ? 4 : 2;
+  return formatInputNumber(roundTo(displayPrice, decimals), decimals);
+}
+
+function renderRow(row) {
+  const normalized = normalizeRow(row, { amountsInBaseCurrency: true });
+  const fragment = els.rowTemplate.content.cloneNode(true);
+  const tr = fragment.querySelector("tr");
+
+  tr.querySelector(".service").value = normalized.service;
+  tr.querySelector(".category").value = normalized.category;
+  tr.querySelector(".model").value = normalized.model;
+  tr.querySelector(".qty").value = formatInputNumber(normalized.qty, 0);
+  tr.querySelector(".units").value = formatInputNumber(normalized.units, 0);
+  tr.querySelector(".price").value = formatDisplayPrice(normalized.price);
+  tr.querySelector(".discount").value = formatInputNumber(normalized.discount, 0);
+
+  tr.querySelector(".remove").addEventListener("click", () => {
+    tr.remove();
+    recalculateAndRender();
+  });
+
+  tr.querySelectorAll("input, select").forEach((input) => {
+    input.addEventListener("input", () => recalculateAndRender());
+  });
+
+  els.resourceBody.appendChild(fragment);
+}
+
+function renderRows(rows) {
+  els.resourceBody.innerHTML = "";
+  rows.forEach((row) => renderRow(row));
+}
+
+function addRow(row) {
+  renderRow(
+    row || {
+      service: "New Service",
+      category: "Compute",
+      model: "on-demand",
+      qty: 1,
+      units: 730,
+      price: 0.1,
+      discount: 0,
+    }
+  );
+}
+
+function getDisplayRowsFromUI() {
+  return [...els.resourceBody.querySelectorAll("tr")].map((tr) => readDisplayRow(tr));
+}
+
+function getRowsFromUI({ currency = currentDisplayCurrency } = {}) {
+  return [...els.resourceBody.querySelectorAll("tr")].map((tr) => readRow(tr, { currency }));
+}
+
+function saveState(rows, currency, growthRate, monthlyBudget) {
+  const payload = {
+    rows,
+    currency,
+    growthRate,
+    scenarioName: sanitizeScenarioName(els.scenarioName.value),
+    monthlyBudget,
+  };
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage failures in private browsing or restricted environments.
+  }
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function aggregateByKey(rows, key) {
+  const map = new Map();
+  rows.forEach((row) => {
+    const entry = row[key];
+    map.set(entry, (map.get(entry) || 0) + monthlyCost(row));
+  });
+  return map;
+}
+
 function getCanvasSurface(canvas) {
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -376,158 +686,16 @@ function getCanvasSurface(canvas) {
   return { ctx, width, height };
 }
 
-function modelLabel(model) {
-  if (model === "on-demand") return "On-Demand";
-  if (model === "reserved") return "Reserved";
-  if (model === "spot") return "Spot";
-  return model;
-}
-
-function formatCurrency(value, currency) {
-  const symbol = currencySymbols[currency] || "$";
-  return `${symbol}${value.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function getDefaultRows() {
-  return [
-    {
-      service: "Compute Node",
-      category: "Compute",
-      model: "on-demand",
-      qty: 6,
-      units: 730,
-      price: 0.14,
-      discount: 0,
-    },
-    {
-      service: "Object Storage",
-      category: "Storage",
-      model: "reserved",
-      qty: 18,
-      units: 1,
-      price: 23,
-      discount: 5,
-    },
-    {
-      service: "Managed Database",
-      category: "Database",
-      model: "on-demand",
-      qty: 2,
-      units: 730,
-      price: 0.55,
-      discount: 0,
-    },
-    {
-      service: "CDN Egress",
-      category: "Networking",
-      model: "spot",
-      qty: 12,
-      units: 100,
-      price: 0.09,
-      discount: 0,
-    },
-  ];
-}
-
-function readRow(tr) {
-  const value = (selector) => tr.querySelector(selector).value;
-  return {
-    service: value(".service").trim() || "Untitled Service",
-    category: value(".category"),
-    model: value(".model"),
-    qty: Number(value(".qty")) || 0,
-    units: Number(value(".units")) || 0,
-    price: Number(value(".price")) || 0,
-    discount: Number(value(".discount")) || 0,
-  };
-}
-
-function monthlyCost(row) {
-  const base = row.qty * row.units * row.price;
-  const discountFactor = 1 - Math.min(Math.max(row.discount, 0), 100) / 100;
-  const modelFactor = modelMultipliers[row.model] ?? 1;
-  return base * discountFactor * modelFactor;
-}
-
-function renderRow(row) {
-  const fragment = els.rowTemplate.content.cloneNode(true);
-  const tr = fragment.querySelector("tr");
-
-  tr.querySelector(".service").value = row.service;
-  tr.querySelector(".category").value = row.category;
-  tr.querySelector(".model").value = row.model;
-  tr.querySelector(".qty").value = row.qty;
-  tr.querySelector(".units").value = row.units;
-  tr.querySelector(".price").value = row.price;
-  tr.querySelector(".discount").value = row.discount;
-
-  tr.querySelector(".remove").addEventListener("click", () => {
-    tr.remove();
-    recalculateAndRender();
-  });
-
-  tr.querySelectorAll("input, select").forEach((input) => {
-    input.addEventListener("input", () => recalculateAndRender());
-  });
-
-  els.resourceBody.appendChild(fragment);
-}
-
-function getRowsFromUI() {
-  return [...els.resourceBody.querySelectorAll("tr")].map((tr) => readRow(tr));
-}
-
-function saveState(rows, currency, growthRate) {
-  const payload = {
-    rows,
-    currency,
-    growthRate,
-    scenarioName: els.scenarioName.value,
-    monthlyBudget: Number(els.monthlyBudget.value) || 0,
-  };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-}
-
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function aggregateByKey(rows, key) {
-  const map = new Map();
-  for (const row of rows) {
-    const k = row[key];
-    const current = map.get(k) || 0;
-    map.set(k, current + monthlyCost(row));
-  }
-  return map;
-}
-
 function drawCategoryBars(categoryMap, currency) {
   els.categoryBars.innerHTML = "";
   const entries = [...categoryMap.entries()].sort((a, b) => b[1] - a[1]);
 
-  if (entries.length === 0) {
+  if (!entries.length) {
     els.categoryBars.textContent = "No category data yet.";
     return;
   }
 
   const maxValue = entries[0][1] || 1;
-
-  const swatches = [
-    ["#2f679d", "#5684b4"],
-    ["#4d769f", "#7998bc"],
-    ["#6a87a8", "#93abc5"],
-    ["#7f96b0", "#a8bacd"],
-  ];
 
   entries.forEach(([category, cost], index) => {
     const row = document.createElement("div");
@@ -542,12 +710,12 @@ function drawCategoryBars(categoryMap, currency) {
     const fill = document.createElement("div");
     fill.className = "bar-fill";
     fill.style.width = `${(cost / maxValue) * 100}%`;
-    const [start, end] = swatches[index % swatches.length];
+    const [start, end] = categorySwatches[index % categorySwatches.length];
     fill.style.background = `linear-gradient(90deg, ${start}, ${end})`;
 
     const value = document.createElement("span");
     value.className = "bar-value";
-    value.textContent = formatCurrency(convert(cost, currency), currency);
+    value.textContent = formatCurrency(fromBaseCurrency(cost, currency), currency);
 
     track.appendChild(fill);
     row.append(label, track, value);
@@ -556,18 +724,16 @@ function drawCategoryBars(categoryMap, currency) {
 }
 
 function drawDonut(modelMap, currency) {
-  const canvas = els.modelDonut;
-  const { ctx, width, height } = getCanvasSurface(canvas);
-
+  const { ctx, width, height } = getCanvasSurface(els.modelDonut);
   const entries = [...modelMap.entries()];
   const total = entries.reduce((sum, [, value]) => sum + value, 0);
 
   els.donutLegend.innerHTML = "";
 
   if (!total) {
-    ctx.fillStyle = "#41576e";
+    ctx.fillStyle = "#55656c";
     ctx.font = "16px IBM Plex Sans";
-    ctx.fillText("No pricing model data", 20, 34);
+    ctx.fillText("No commitment mix yet", 20, 34);
     return;
   }
 
@@ -575,8 +741,8 @@ function drawDonut(modelMap, currency) {
   const cy = height / 2;
   const radius = 88;
   const innerRadius = 54;
-
   let start = -Math.PI / 2;
+
   entries.forEach(([model, value]) => {
     const angle = (value / total) * Math.PI * 2;
 
@@ -584,235 +750,319 @@ function drawDonut(modelMap, currency) {
     ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, radius, start, start + angle);
     ctx.closePath();
-    ctx.fillStyle = modelColors[model] || "#5f7780";
+    ctx.fillStyle = modelColors[model] || "#68767c";
     ctx.fill();
-
     start += angle;
 
     const item = document.createElement("div");
     item.className = "legend-item";
-    item.innerHTML = `
-      <span class="legend-dot" style="background:${modelColors[model] || "#5f7780"}"></span>
-      <span>${modelLabel(model)} (${Math.round((value / total) * 100)}%) - ${formatCurrency(convert(value, currency), currency)}</span>
-    `;
+
+    const dot = document.createElement("span");
+    dot.className = "legend-dot";
+    dot.style.background = modelColors[model] || "#68767c";
+
+    const label = document.createElement("span");
+    label.textContent = `${modelLabel(model)} · ${Math.round((value / total) * 100)}% · ${formatCurrency(
+      fromBaseCurrency(value, currency),
+      currency
+    )}`;
+
+    item.append(dot, label);
     els.donutLegend.appendChild(item);
   });
 
   ctx.beginPath();
   ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = "#fffdf9";
   ctx.fill();
 
-  ctx.fillStyle = "#2f455d";
+  const totalText = formatCurrency(fromBaseCurrency(total, currency), currency);
+  ctx.fillStyle = "#33424a";
   ctx.font = "600 14px IBM Plex Mono";
-  const totalText = formatCurrency(convert(total, currency), currency);
-  const textX = cx - ctx.measureText(totalText).width / 2;
-  ctx.fillText(totalText, textX, cy + 4);
+  ctx.fillText(totalText, cx - ctx.measureText(totalText).width / 2, cy + 4);
 }
 
 function drawForecast(monthlyBase, growthRate, currency) {
-  const canvas = els.forecastLine;
-  const { ctx, width, height } = getCanvasSurface(canvas);
-
-  const pad = { top: 26, right: 26, bottom: 34, left: 44 };
-  const chartW = width - pad.left - pad.right;
-  const chartH = height - pad.top - pad.bottom;
+  const { ctx, width, height } = getCanvasSurface(els.forecastLine);
+  const pad = { top: 26, right: 26, bottom: 34, left: 52 };
+  const chartWidth = width - pad.left - pad.right;
+  const chartHeight = height - pad.top - pad.bottom;
 
   const points = [];
   for (let month = 0; month < 12; month += 1) {
-    const projected = monthlyBase * Math.pow(1 + growthRate / 100, month);
-    points.push(projected);
+    points.push(monthlyBase * Math.pow(1 + growthRate / 100, month));
   }
 
   const maxY = Math.max(...points, 1);
   const minY = Math.min(...points, 0);
+  const domain = maxY - minY || 1;
+  const yFor = (value) => pad.top + chartHeight - ((value - minY) / domain) * chartHeight;
 
-  const yFor = (value) => {
-    const domain = maxY - minY || 1;
-    return pad.top + chartH - ((value - minY) / domain) * chartH;
-  };
-
-  ctx.strokeStyle = "rgba(75, 97, 120, 0.3)";
+  ctx.strokeStyle = "rgba(95, 108, 114, 0.26)";
   ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i += 1) {
-    const y = pad.top + (chartH * i) / 4;
+  for (let step = 0; step <= 4; step += 1) {
+    const y = pad.top + (chartHeight * step) / 4;
+    const value = maxY - ((maxY - minY) * step) / 4;
+
     ctx.beginPath();
     ctx.moveTo(pad.left, y);
     ctx.lineTo(width - pad.right, y);
     ctx.stroke();
 
-    const v = maxY - ((maxY - minY) * i) / 4;
-    ctx.fillStyle = "#5f7389";
+    ctx.fillStyle = "#647177";
     ctx.font = "11px IBM Plex Mono";
-    ctx.fillText(formatCurrency(convert(v, currency), currency), 8, y + 4);
+    ctx.fillText(formatCurrency(fromBaseCurrency(value, currency), currency), 8, y + 4);
   }
 
   ctx.beginPath();
   points.forEach((value, index) => {
-    const x = pad.left + (chartW * index) / 11;
+    const x = pad.left + (chartWidth * index) / 11;
     const y = yFor(value);
     if (index === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
 
-  const areaGradient = ctx.createLinearGradient(0, pad.top, 0, pad.top + chartH);
-  areaGradient.addColorStop(0, "rgba(50, 110, 168, 0.2)");
-  areaGradient.addColorStop(1, "rgba(50, 110, 168, 0.02)");
-  ctx.lineTo(pad.left + chartW, pad.top + chartH);
-  ctx.lineTo(pad.left, pad.top + chartH);
+  const areaGradient = ctx.createLinearGradient(0, pad.top, 0, pad.top + chartHeight);
+  areaGradient.addColorStop(0, "rgba(53, 86, 109, 0.2)");
+  areaGradient.addColorStop(1, "rgba(53, 86, 109, 0.02)");
+  ctx.lineTo(pad.left + chartWidth, pad.top + chartHeight);
+  ctx.lineTo(pad.left, pad.top + chartHeight);
   ctx.closePath();
   ctx.fillStyle = areaGradient;
   ctx.fill();
 
   ctx.beginPath();
   points.forEach((value, index) => {
-    const x = pad.left + (chartW * index) / 11;
+    const x = pad.left + (chartWidth * index) / 11;
     const y = yFor(value);
     if (index === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
-  ctx.strokeStyle = "#326ea8";
+  ctx.strokeStyle = "#35566d";
   ctx.lineWidth = 2.5;
   ctx.stroke();
 
   points.forEach((value, index) => {
-    const x = pad.left + (chartW * index) / 11;
+    const x = pad.left + (chartWidth * index) / 11;
     const y = yFor(value);
 
     ctx.beginPath();
-    ctx.arc(x, y, 3.2, 0, Math.PI * 2);
-    ctx.fillStyle = "#5f89b2";
+    ctx.arc(x, y, 3.1, 0, Math.PI * 2);
+    ctx.fillStyle = "#a55a32";
     ctx.fill();
 
     if (index === 0 || index === 11) {
-      const label = index === 0 ? "Now" : "12mo";
-      ctx.fillStyle = "#49617a";
+      const marker = index === 0 ? "Now" : "12 mo";
+      const markerValue = formatCurrency(fromBaseCurrency(value, currency), currency);
+      ctx.fillStyle = "#4d595f";
       ctx.font = "12px IBM Plex Sans";
-      ctx.fillText(label, x - 11, height - 12);
-
-      ctx.fillStyle = "#3d556f";
+      ctx.fillText(marker, x - 14, height - 12);
+      ctx.fillStyle = "#3f4b52";
       ctx.font = "11px IBM Plex Mono";
-      const valueText = formatCurrency(convert(value, currency), currency);
-      ctx.fillText(valueText, x - 24, y - 10);
+      ctx.fillText(markerValue, x - 28, y - 10);
     }
   });
 
   return points[points.length - 1] || 0;
 }
 
-function convert(usdAmount, currency) {
-  const rate = exchangeRates[currency] || 1;
-  return usdAmount * rate;
+function renderRecommendations(rows, monthlyUsd, topCategory, deltaUsd, budgetUsd) {
+  const tips = [];
+  const isOnTarget = Math.abs(deltaUsd) < 0.005;
+
+  if (!rows.length) {
+    tips.push("Start with the two or three services you understand best. The biggest line items usually matter more than perfect detail.");
+    tips.push("Use a quick starting point if you want a realistic first draft before you customize the stack.");
+  } else {
+    const topService = [...rows].sort((a, b) => monthlyCost(b) - monthlyCost(a))[0];
+    const onDemandSpend = rows
+      .filter((row) => row.model === "on-demand")
+      .reduce((sum, row) => sum + monthlyCost(row), 0);
+    const growthRate = clamp(toNumber(els.growthRate.value, DEFAULT_GROWTH_RATE), -10, 25);
+
+    if (topCategory && monthlyUsd > 0) {
+      const share = Math.round((topCategory[1] / monthlyUsd) * 100);
+      tips.push(`${topCategory[0]} carries about ${share}% of the monthly run rate. That is the first assumption worth pressure-testing.`);
+    }
+
+    if (budgetUsd > 0) {
+      if (isOnTarget) {
+        tips.push("The plan is landing right on budget. Keep a little breathing room anyway because transfer, support, and logging costs rarely stay perfectly flat.");
+      } else if (deltaUsd > 0) {
+        tips.push(
+          `This version is ${formatCurrency(fromBaseCurrency(deltaUsd), currentDisplayCurrency)} over budget. Pull on the biggest always-on services before trimming the small support tools.`
+        );
+      } else {
+        tips.push(
+          `You still have ${formatCurrency(fromBaseCurrency(Math.abs(deltaUsd)), currentDisplayCurrency)} of budget headroom. Keep some of that for data transfer, logging, and forecast misses.`
+        );
+      }
+    } else {
+      tips.push("No budget guardrail is set yet. Add one if you want the worksheet to flag drift early.");
+    }
+
+    if (topService) {
+      tips.push(`${topService.service} is the single largest line item. It is a good candidate for a pricing or architecture review.`);
+    }
+
+    if (monthlyUsd > 0 && onDemandSpend / monthlyUsd > 0.45) {
+      tips.push("A large share of the spend is still on on-demand pricing. Stable workloads may deserve reserved capacity or rightsizing.");
+    }
+
+    if (growthRate >= 10) {
+      tips.push("The growth slider is in stress-test territory. Treat the month-12 number as a pressure scenario, not a promise.");
+    }
+  }
+
+  els.recommendationList.innerHTML = "";
+  tips.slice(0, 4).forEach((tip) => {
+    const item = document.createElement("li");
+    item.textContent = tip;
+    els.recommendationList.appendChild(item);
+  });
 }
 
 function recalculateAndRender() {
-  const rows = getRowsFromUI();
-  const currency = els.currencySelect.value;
-  const growthRate = Number(els.growthRate.value);
-  els.growthValue.value = `${growthRate}%`;
+  const rows = getRowsFromUI({ currency: currentDisplayCurrency });
+  const currency = currentDisplayCurrency;
+  const growthRate = clamp(toNumber(els.growthRate.value, DEFAULT_GROWTH_RATE), -10, 25);
+  const budgetUsd = readBudgetFromUi(currency);
+  const scenarioName = sanitizeScenarioName(els.scenarioName.value);
 
-  const costsByRow = rows.map((r) => monthlyCost(r));
-  [...els.resourceBody.querySelectorAll("tr")].forEach((tr, i) => {
-    tr.querySelector(".cost-cell").textContent = formatCurrency(
-      convert(costsByRow[i], currency),
-      currency
-    );
+  els.growthRate.value = String(growthRate);
+  els.growthValue.value = `${growthRate}%`;
+  els.growthValue.textContent = `${growthRate}%`;
+  els.scenarioName.value = scenarioName;
+
+  const costsByRow = rows.map((row) => monthlyCost(row));
+  [...els.resourceBody.querySelectorAll("tr")].forEach((tr, index) => {
+    tr.querySelector(".cost-cell").textContent = formatCurrency(fromBaseCurrency(costsByRow[index], currency), currency);
   });
 
-  const monthlyUsd = costsByRow.reduce((sum, v) => sum + v, 0);
+  const monthlyUsd = costsByRow.reduce((sum, value) => sum + value, 0);
   const annualUsd = monthlyUsd * 12;
   const categoryMap = aggregateByKey(rows, "category");
   const modelMap = aggregateByKey(rows, "model");
-  const budgetUsd = Number(els.monthlyBudget.value) || 0;
-
   const topCategory = [...categoryMap.entries()].sort((a, b) => b[1] - a[1])[0];
+  const topShare = topCategory && monthlyUsd > 0 ? Math.round((topCategory[1] / monthlyUsd) * 100) : 0;
+  const deltaUsd = monthlyUsd - budgetUsd;
+  const isOnTarget = Math.abs(deltaUsd) < 0.005;
 
-  els.monthlyTotal.textContent = formatCurrency(convert(monthlyUsd, currency), currency);
-  els.annualTotal.textContent = formatCurrency(convert(annualUsd, currency), currency);
+  els.monthlyTotal.textContent = formatCurrency(fromBaseCurrency(monthlyUsd, currency), currency);
+  els.annualTotal.textContent = formatCurrency(fromBaseCurrency(annualUsd, currency), currency);
   els.topCategory.textContent = topCategory ? topCategory[0] : "-";
   els.resourceCount.textContent = String(rows.length);
 
-  const deltaUsd = monthlyUsd - budgetUsd;
   const deltaCard = els.budgetDelta.closest(".metric-card");
-  deltaCard.classList.toggle("metric-over", deltaUsd > 0);
-  deltaCard.classList.toggle("metric-under", deltaUsd <= 0);
-  const deltaLabel = deltaUsd > 0 ? "Over " : "Under ";
-  els.budgetDelta.textContent = `${deltaLabel}${formatCurrency(
-    convert(Math.abs(deltaUsd), currency),
-    currency
-  )}`;
+  deltaCard.classList.toggle("metric-over", deltaUsd > 0 && !isOnTarget);
+  deltaCard.classList.toggle("metric-under", deltaUsd < 0 && !isOnTarget);
+  els.budgetDelta.textContent = isOnTarget
+    ? "On target"
+    : `${deltaUsd > 0 ? "Over " : "Under "}${formatCurrency(
+        fromBaseCurrency(Math.abs(deltaUsd), currency),
+        currency
+      )}`;
 
-  const topShare = topCategory && monthlyUsd > 0 ? Math.round((topCategory[1] / monthlyUsd) * 100) : 0;
-  const scenarioName = els.scenarioName.value.trim() || "Custom";
-  const modeText = deltaUsd > 0 ? "Over Budget" : "Within Budget";
-  els.scenarioTag.textContent = `${scenarioName} | ${modeText}`;
+  if (!rows.length) {
+    els.scenarioTag.textContent = "Draft model • start with a few trusted line items";
+  } else if (isOnTarget) {
+    els.scenarioTag.textContent = `${rows.length} services • on target • ${topCategory ? `${topCategory[0]} leads spend` : "balanced mix"}`;
+  } else if (deltaUsd > 0) {
+    els.scenarioTag.textContent = `${rows.length} services • over target • ${topCategory ? `${topCategory[0]} leads spend` : "review assumptions"}`;
+  } else {
+    els.scenarioTag.textContent = `${rows.length} services • inside budget • ${topCategory ? `${topCategory[0]} leads spend` : "healthy mix"}`;
+  }
+
   els.healthNote.textContent = topCategory
-    ? `${topCategory[0]} represents about ${topShare}% of monthly spend.`
-    : "Add at least one resource to generate spending insights.";
+    ? `${topCategory[0]} makes up roughly ${topShare}% of the monthly run rate. Validate that estimate against real utilization and transfer patterns.`
+    : "Add a few services to start shaping the monthly run rate.";
 
   drawCategoryBars(categoryMap, currency);
   drawDonut(modelMap, currency);
   const month12Usd = drawForecast(monthlyUsd, growthRate, currency);
-  els.forecastTag.textContent = `Projected month-12 total: ${formatCurrency(
-    convert(month12Usd, currency),
+  els.forecastTag.textContent = `If this growth holds, month 12 lands at ${formatCurrency(
+    fromBaseCurrency(month12Usd, currency),
     currency
-  )}`;
+  )}.`;
 
-  renderRecommendations(rows, monthlyUsd, topCategory, deltaUsd);
-
-  saveState(rows, currency, growthRate);
+  renderRecommendations(rows, monthlyUsd, topCategory, deltaUsd, budgetUsd);
+  saveState(rows, currency, growthRate, budgetUsd);
 }
 
-function addRow(row) {
-  renderRow(
-    row || {
-      service: "New Service",
-      category: "Compute",
-      model: "on-demand",
-      qty: 1,
-      units: 730,
-      price: 0.1,
-      discount: 0,
-    }
-  );
+function applyScenarioState({
+  scenarioName = DEFAULT_SCENARIO_NAME,
+  monthlyBudget = DEFAULT_MONTHLY_BUDGET_USD,
+  growthRate = DEFAULT_GROWTH_RATE,
+  currency = BASE_CURRENCY,
+  rows = getDefaultRows(),
+}) {
+  currentDisplayCurrency = exchangeRates[currency] ? currency : BASE_CURRENCY;
+  els.currencySelect.value = currentDisplayCurrency;
+  els.scenarioName.value = sanitizeScenarioName(scenarioName);
+  els.growthRate.value = String(clamp(toNumber(growthRate, DEFAULT_GROWTH_RATE), -10, 25));
+  setBudgetInput(monthlyBudget, currentDisplayCurrency);
+
+  const normalizedRows = normalizeRows(rows, { amountsInBaseCurrency: true });
+  renderRows(normalizedRows.length ? normalizedRows : getDefaultRows());
+  recalculateAndRender();
 }
 
 function resetApp() {
-  els.resourceBody.innerHTML = "";
-  getDefaultRows().forEach(addRow);
-  els.currencySelect.value = "USD";
-  els.growthRate.value = "4";
-  els.monthlyBudget.value = "8000";
-  els.scenarioName.value = "Q2 Production";
-  recalculateAndRender();
+  applyScenarioState({
+    scenarioName: DEFAULT_SCENARIO_NAME,
+    monthlyBudget: DEFAULT_MONTHLY_BUDGET_USD,
+    growthRate: DEFAULT_GROWTH_RATE,
+    currency: BASE_CURRENCY,
+    rows: getDefaultRows(),
+  });
+  setImportStatus("");
 }
 
 function applyPreset(name) {
   const preset = presets[name];
   if (!preset) return;
 
-  els.resourceBody.innerHTML = "";
-  preset.rows.forEach(addRow);
-  els.scenarioName.value = preset.scenarioName;
-  els.monthlyBudget.value = String(preset.monthlyBudget);
-  els.growthRate.value = String(preset.growthRate);
+  applyScenarioState({
+    scenarioName: preset.scenarioName,
+    monthlyBudget: preset.monthlyBudget,
+    growthRate: preset.growthRate,
+    currency: BASE_CURRENCY,
+    rows: normalizeRows(preset.rows, { amountsInBaseCurrency: true }),
+  });
+  setImportStatus(`Loaded the ${preset.scenarioName} starting point.`, "success");
+}
+
+function handleCurrencyChange() {
+  const nextCurrency = exchangeRates[els.currencySelect.value] ? els.currencySelect.value : BASE_CURRENCY;
+  if (nextCurrency === currentDisplayCurrency) {
+    recalculateAndRender();
+    return;
+  }
+
+  const rows = getRowsFromUI({ currency: currentDisplayCurrency });
+  const budgetUsd = readBudgetFromUi(currentDisplayCurrency);
+  currentDisplayCurrency = nextCurrency;
+
+  renderRows(rows);
+  setBudgetInput(budgetUsd, currentDisplayCurrency);
   recalculateAndRender();
+  setImportStatus(`Display currency switched to ${currentDisplayCurrency}.`, "success");
 }
 
 function hydrate() {
   const state = loadState();
-
-  if (state?.rows?.length) {
-    state.rows.forEach(addRow);
-    els.currencySelect.value = state.currency || "USD";
-    els.growthRate.value = String(state.growthRate ?? 4);
-    els.monthlyBudget.value = String(state.monthlyBudget ?? 8000);
-    els.scenarioName.value = state.scenarioName || "Q2 Production";
-  } else {
-    getDefaultRows().forEach(addRow);
+  if (state) {
+    applyScenarioState({
+      scenarioName: state.scenarioName,
+      monthlyBudget: state.monthlyBudget,
+      growthRate: state.growthRate,
+      currency: state.currency,
+      rows: state.rows,
+    });
+    return;
   }
 
-  recalculateAndRender();
+  resetApp();
 }
 
 els.addRowBtn.addEventListener("click", () => {
@@ -821,11 +1071,15 @@ els.addRowBtn.addEventListener("click", () => {
 });
 
 els.resetBtn.addEventListener("click", () => {
-  localStorage.removeItem(STORAGE_KEY);
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
   resetApp();
 });
 
-els.currencySelect.addEventListener("change", recalculateAndRender);
+els.currencySelect.addEventListener("change", handleCurrencyChange);
 els.growthRate.addEventListener("input", recalculateAndRender);
 els.monthlyBudget.addEventListener("input", recalculateAndRender);
 els.scenarioName.addEventListener("input", recalculateAndRender);
@@ -843,6 +1097,7 @@ els.dropZone.addEventListener("keydown", (event) => {
     els.importFile.click();
   }
 });
+
 els.importFile.addEventListener("change", async (event) => {
   const [file] = event.target.files || [];
   await handleImportFile(file);
@@ -868,7 +1123,6 @@ els.dropZone.addEventListener("drop", async (event) => {
   await handleImportFile(file);
 });
 
-let resizeTimer;
 window.addEventListener("resize", () => {
   window.clearTimeout(resizeTimer);
   resizeTimer = window.setTimeout(recalculateAndRender, 120);

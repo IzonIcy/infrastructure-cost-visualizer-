@@ -51,12 +51,14 @@ export function createScenarioStore({ repoRoot }) {
   return {
     async list() {
       const db = await loadDb();
-      return db.items.map(({ id, name, createdAt, updatedAt }) => ({
-        id,
-        name,
-        createdAt,
-        updatedAt
-      }));
+      return db.items
+        .map(({ id, name, createdAt, updatedAt }) => ({
+          id,
+          name,
+          createdAt,
+          updatedAt
+        }))
+        .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
     },
 
     async get(id) {
@@ -81,9 +83,11 @@ export function createScenarioStore({ repoRoot }) {
       const db = await loadDb();
       const idx = db.items.findIndex((x) => x.id === id);
       if (idx === -1) return null;
-      db.items[idx] = { ...db.items[idx], ...patch, updatedAt: nowIso() };
+      const updated = { ...db.items[idx], ...patch, updatedAt: nowIso() };
+      db.items.splice(idx, 1);
+      db.items.unshift(updated);
       await saveDb(db);
-      return db.items[idx];
+      return updated;
     },
 
     async remove(id) {
@@ -96,4 +100,3 @@ export function createScenarioStore({ repoRoot }) {
     }
   };
 }
-

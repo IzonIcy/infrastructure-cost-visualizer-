@@ -3,11 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Infrastructure Cost Visualizer</title>
+    <meta
+      name="description"
+      content="Plan infrastructure spend with a grounded worksheet, practical cost breakdowns, and a simple growth forecast."
+    />
+    <title>Cloud Spend Planning Desk</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="styles.css" />
@@ -15,12 +19,26 @@
   <body>
     <main class="page">
       <header class="hero">
-        <p class="kicker">Infrastructure Planning</p>
-        <h1>Infrastructure Cost Visualizer</h1>
-        <p class="subtitle">
-          Estimate monthly infrastructure spend, compare pricing models, and review a simple
-          12-month forecast.
-        </p>
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <p class="kicker">Engineering Finance Desk</p>
+            <h1>Plan cloud spend before it turns into a billing surprise.</h1>
+            <p class="subtitle">
+              Model the services you actually expect to run, pressure-test the budget, and spot
+              the line items that deserve a second look before launch.
+            </p>
+          </div>
+
+          <aside class="hero-aside" aria-label="What this planner is best used for">
+            <p class="aside-label">Best used for</p>
+            <ul class="hero-points">
+              <li>launch planning and re-platforming</li>
+              <li>quarterly budget resets</li>
+              <li>catching oversized commitments early</li>
+            </ul>
+          </aside>
+        </div>
+
         <div class="scenario-strip">
           <label class="field-inline scenario-field">
             <span>Scenario</span>
@@ -30,38 +48,67 @@
             <span>Budget / Month</span>
             <input id="monthlyBudget" class="input" type="number" min="0" step="100" value="8000" />
           </label>
-          <p id="scenarioTag" class="scenario-tag">Balanced Growth Profile</p>
+          <p id="scenarioTag" class="scenario-tag">Draft planning model</p>
         </div>
+
+        <p class="hero-footnote">
+          Display currency uses approximate FX rates for planning only, not provider billing.
+        </p>
       </header>
 
       <section class="panel controls">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Worksheet</p>
+            <h2>Service Ledger</h2>
+          </div>
+          <p class="section-copy">
+            Start with the services you know best, then fill in the rest of the stack once the big
+            numbers feel believable.
+          </p>
+        </div>
+
         <div class="controls-top">
-          <h2>Cost Inputs</h2>
           <div class="toolbar">
             <label class="field-inline">
-              <span>Currency</span>
-              <select id="currencySelect" aria-label="Currency selector">
+              <span>Display Currency</span>
+              <select id="currencySelect" aria-label="Display currency selector">
                 <option value="USD">USD</option>
                 <option value="EUR">EUR</option>
                 <option value="GBP">GBP</option>
               </select>
             </label>
-            <button id="addRowBtn" class="btn btn-primary">Add Resource</button>
+            <button id="addRowBtn" class="btn btn-primary" type="button">Add Line Item</button>
             <button id="importBtn" class="btn btn-ghost" type="button">Import CSV</button>
             <button id="exportBtn" class="btn btn-ghost" type="button">Export CSV</button>
-            <button id="saveServerBtn" class="btn btn-ghost" type="button" title="Save scenario to backend">
-              Save
+            <button
+              id="saveServerBtn"
+              class="btn btn-ghost"
+              type="button"
+              title="Save scenario to backend"
+            >
+              Save Scenario
             </button>
-            <button id="loadServerBtn" class="btn btn-ghost" type="button" title="Load scenario from backend">
-              Load
+            <button
+              id="loadServerBtn"
+              class="btn btn-ghost"
+              type="button"
+              title="Load scenario from backend"
+            >
+              Load Saved
             </button>
-            <button id="resetBtn" class="btn btn-ghost">Reset</button>
+            <button id="resetBtn" class="btn btn-ghost" type="button">Reset Sheet</button>
             <input id="importFile" type="file" accept=".csv,text/csv" hidden />
           </div>
         </div>
 
+        <p class="toolbar-note">
+          Unit prices, the monthly budget, and exported CSV values are shown in the selected
+          display currency.
+        </p>
+
         <div class="preset-row" aria-label="Quick templates">
-          <p class="preset-label">Starter Scenarios</p>
+          <p class="preset-label">Quick starting points</p>
           <div class="preset-actions">
             <button id="presetSaas" class="btn btn-pill" type="button">SaaS App Stack</button>
             <button id="presetData" class="btn btn-pill" type="button">Data Platform</button>
@@ -70,7 +117,7 @@
         </div>
 
         <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Drop CSV file here to import">
-          Drop CSV here or click to upload
+          Drop a CSV here or click to import a saved worksheet
         </div>
         <p id="importStatus" class="import-status" aria-live="polite"></p>
 
@@ -92,28 +139,30 @@
             <tbody id="resourceBody"></tbody>
           </table>
         </div>
-        <p id="healthNote" class="helper-note">Tip: validate assumptions against at least one real billing report.</p>
+        <p id="healthNote" class="helper-note">
+          Add a few services to start shaping the monthly run rate.
+        </p>
       </section>
 
       <section class="summary">
         <article class="metric-card">
-          <p>Total Monthly</p>
+          <p>Monthly Run Rate</p>
           <h3 id="monthlyTotal">$0.00</h3>
         </article>
         <article class="metric-card">
-          <p>Total Annual</p>
+          <p>Annualized Cost</p>
           <h3 id="annualTotal">$0.00</h3>
         </article>
         <article class="metric-card">
-          <p>Most Expensive Category</p>
+          <p>Dominant Category</p>
           <h3 id="topCategory">-</h3>
         </article>
         <article class="metric-card">
-          <p>Resource Count</p>
+          <p>Services Modeled</p>
           <h3 id="resourceCount">0</h3>
         </article>
         <article class="metric-card metric-pulse">
-          <p>Budget Delta</p>
+          <p>Budget Gap</p>
           <h3 id="budgetDelta">$0.00</h3>
         </article>
       </section>
@@ -121,14 +170,14 @@
       <section class="panel charts">
         <article class="chart-card">
           <div class="chart-header">
-            <h2>Spend by Category</h2>
+            <h2>Where The Money Goes</h2>
           </div>
           <div id="categoryBars" class="bars"></div>
         </article>
 
         <article class="chart-card">
           <div class="chart-header">
-            <h2>Pricing Model Split</h2>
+            <h2>Commitment Mix</h2>
           </div>
           <canvas id="modelDonut" width="360" height="260" aria-label="Pricing model donut chart"></canvas>
           <div id="donutLegend" class="legend"></div>
@@ -136,33 +185,36 @@
 
         <article class="chart-card chart-wide">
           <div class="chart-header">
-            <h2>12-Month Forecast</h2>
+            <h2>12-Month Runway</h2>
             <label class="field-inline compact">
               <span>Monthly Growth</span>
               <input id="growthRate" type="range" min="-10" max="25" step="1" value="4" />
               <output id="growthValue">4%</output>
             </label>
           </div>
-          <p id="forecastTag" class="helper-note chart-note">Projected month-12 total: $0.00</p>
+          <p id="forecastTag" class="helper-note chart-note">If this growth holds, month 12 lands at $0.00.</p>
           <canvas id="forecastLine" class="forecast-canvas" width="920" height="300" aria-label="12-month forecast chart"></canvas>
         </article>
       </section>
 
       <section class="panel insights">
-        <div class="chart-header">
-          <h2>Recommendations</h2>
+        <div class="chart-header chart-header-stack">
+          <div>
+            <h2>Planner Notes</h2>
+            <p class="section-copy compact-copy">A few practical prompts based on the current mix.</p>
+          </div>
         </div>
         <ul id="recommendationList" class="recommendation-list"></ul>
       </section>
     </main>
 
     <footer class="page-footnote">
-      <p>Values are stored in your browser for local planning.</p>
+      <p>Use this as a planning tool, then compare the assumptions against real provider billing data.</p>
     </footer>
 
     <template id="rowTemplate">
       <tr>
-        <td><input class="input service" type="text" value="Compute Node" /></td>
+        <td><input class="input service" type="text" value="API Cluster" /></td>
         <td>
           <select class="input category">
             <option>Compute</option>
@@ -187,7 +239,9 @@
         <td><input class="input discount" type="number" min="0" max="100" step="1" value="0" /></td>
         <td class="cost-cell">$0.00</td>
         <td>
-          <button class="btn-icon remove" aria-label="Remove resource" title="Remove resource">x</button>
+          <button class="btn-icon remove" aria-label="Remove resource" title="Remove resource" type="button">
+            &times;
+          </button>
         </td>
       </tr>
     </template>

@@ -17,10 +17,24 @@ const { port } = server.address();
 const base = `http://127.0.0.1:${port}`;
 
 try {
+  const home = await fetch(`${base}/`);
+  assert(home.ok, "home page failed");
+  const html = await home.text();
+  assert(html.includes("Cloud Spend Planning Desk"), "home page returned unexpected HTML");
+
   const health = await fetch(`${base}/api/health`);
   assert(health.ok, "health endpoint failed");
   const healthJson = await health.json();
   assert(healthJson.ok === true, "health response missing ok:true");
+
+  const serverSource = await fetch(`${base}/server/app.js`);
+  assert(serverSource.status === 404, "server source should not be public");
+
+  const dataFile = await fetch(`${base}/data/scenarios.json`);
+  assert(dataFile.status === 404, "data file should not be public");
+
+  const packageFile = await fetch(`${base}/package.json`);
+  assert(packageFile.status === 404, "package.json should not be public");
 
   const payload = {
     name: "Smoke Test Scenario",
@@ -77,4 +91,3 @@ try {
 } finally {
   server.close();
 }
-

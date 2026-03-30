@@ -5,6 +5,9 @@ import { createScenariosRouter } from "./scenarios/router.js";
 
 export function createApp({ repoRoot }) {
   const app = express();
+  const sendFrontendFile = (res, fileName) => {
+    res.sendFile(path.join(repoRoot, fileName));
+  };
 
   app.disable("x-powered-by");
   app.set("trust proxy", true);
@@ -24,7 +27,21 @@ export function createApp({ repoRoot }) {
 
   app.use("/api/scenarios", createScenariosRouter({ repoRoot }));
 
-  app.use(express.static(repoRoot, { extensions: ["html"] }));
+  app.get("/", (_req, res) => {
+    sendFrontendFile(res, "index.html");
+  });
+
+  app.get("/index.html", (_req, res) => {
+    sendFrontendFile(res, "index.html");
+  });
+
+  app.get("/styles.css", (_req, res) => {
+    sendFrontendFile(res, "styles.css");
+  });
+
+  app.get("/app.js", (_req, res) => {
+    sendFrontendFile(res, "app.js");
+  });
 
   app.use((req, res) => {
     res.status(404).json({ error: "Not found" });
@@ -40,4 +57,3 @@ export function createApp({ repoRoot }) {
 
   return app;
 }
-

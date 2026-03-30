@@ -1,6 +1,6 @@
-# Infrastructure Cost Visualizer
+# Cloud Spend Planning Desk
 
-A lightweight browser-based dashboard to estimate and explore infrastructure spend.
+A lightweight browser-based dashboard to estimate infrastructure spend with a more grounded planning worksheet and simple scenario persistence.
 
 ## Live Site
 
@@ -16,7 +16,7 @@ Hosted URL: `https://infrastructure-cost-visualizer.vercel.app/`
 - Spend by category bars
 - Pricing model donut split
 - 12-month forecast with adjustable growth rate and month-12 projection callout
-- Currency toggle (`USD`, `EUR`, `GBP`)
+- Display currency toggle (`USD`, `EUR`, `GBP`) with approximate planning FX
 - Local state persistence in browser `localStorage`
 - Optional backend API to save/load scenarios
 
@@ -25,6 +25,8 @@ Hosted URL: `https://infrastructure-cost-visualizer.vercel.app/`
 1. Open `index.html` directly in a browser.
 2. Edit resource rows and pricing inputs.
 3. Review updated totals and charts instantly.
+
+When you switch currency, the worksheet converts visible prices and budget values using rough planning rates. It is meant for scenario modeling, not invoice-grade FX.
 
 ## Optional: Run with a Local Server
 
@@ -40,7 +42,7 @@ Then open the printed URL.
 
 This repo also includes an optional Node/Express backend that:
 
-- Serves the static frontend
+- Serves only the frontend assets
 - Provides a small API to persist scenarios on disk (so you can save/load scenarios)
 
 ### Run
