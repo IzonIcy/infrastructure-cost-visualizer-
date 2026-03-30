@@ -4,7 +4,7 @@ A lightweight browser-based dashboard to estimate and explore infrastructure spe
 
 ## Live Site
 
-Hosted URL: `Add deployed site URL here`
+Hosted URL: `https://infrastructure-cost-visualizer.vercel.app/`
 
 ## Features
 
