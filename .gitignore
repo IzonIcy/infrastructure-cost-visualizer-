@@ -3,3 +3,6 @@ data/
 .DS_Store
 npm-debug.log*
 *.log
+
+# OpenCode config
+opencode.json
