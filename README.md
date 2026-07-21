@@ -1,78 +1,61 @@
 # Cloud Spend Planning Desk
 
-A lightweight browser-based dashboard to estimate infrastructure spend with a more grounded planning worksheet and simple scenario persistence.
+Interactive dashboard for estimating cloud infrastructure costs. No signup, no build step — just open the HTML file and start modeling.
 
-## Live Site
+**Live:** [https://infrastructure-cost-visualizer.vercel.app/](https://infrastructure-cost-visualizer.vercel.app/)
 
-Hosted URL: `https://infrastructure-cost-visualizer.vercel.app/`
+## What it does
 
-## Features
+Cloud pricing is confusing. Every provider has On-Demand, Reserved, and Spot pricing with different discounts, and figuring out what your bill will actually look like usually means spreadsheets. This is a single-page tool that lets you:
 
-- Add and remove resources with per-unit pricing inputs
-- Compare pricing models (`On-Demand`, `Reserved`, `Spot`)
-- Set a scenario name and monthly budget guardrail
-- Real-time monthly and annual totals
-- Budget delta tracking (over/under)
-- Spend by category bars
-- Pricing model donut split
-- 12-month forecast with adjustable growth rate and month-12 projection callout
-- Display currency toggle (`USD`, `EUR`, `GBP`) with approximate planning FX
-- Local state persistence in browser `localStorage`
-- Optional backend API to save/load scenarios
+- Add resources with quantities and pricing
+- Compare On-Demand vs Reserved vs Spot side by side
+- Set a budget and see instant over/under feedback
+- View spend breakdowns by category and pricing model
+- Project costs 12 months out with adjustable growth rate
+- Toggle between USD, EUR, GBP
+- Save scenarios to your browser (or to a backend if you want)
 
-## Quick Start
+## Running it
 
-1. Open `index.html` directly in a browser.
-2. Edit resource rows and pricing inputs.
-3. Review updated totals and charts instantly.
+It's a single HTML file. No dependencies, no build step:
 
-When you switch currency, the worksheet converts visible prices and budget values using rough planning rates. It is meant for scenario modeling, not invoice-grade FX.
+```bash
+open index.html
+```
 
-## Optional: Run with a Local Server
-
-If you prefer serving files over localhost:
+Or serve it:
 
 ```bash
 npx serve .
 ```
 
-Then open the printed URL.
-
-## Backend (Optional)
-
-This repo also includes an optional Node/Express backend that:
-
-- Serves only the frontend assets
-- Provides a small API to persist scenarios on disk (so you can save/load scenarios)
-
-### Run
+### Optional backend for saving scenarios
 
 ```bash
 npm install
 npm run dev
 ```
 
-Then open `http://localhost:3000`.
+Then `http://localhost:3000`.
 
-### API
+## How the math works
 
-- `GET /api/health` → `{ ok: true }`
-- `GET /api/scenarios` → list scenarios (metadata)
-- `POST /api/scenarios` → create scenario
-- `GET /api/scenarios/:id` → fetch scenario
-- `PATCH /api/scenarios/:id` → update scenario
-- `DELETE /api/scenarios/:id` → delete scenario
+```
+monthly = qty × units_per_month × unit_price × (1 − discount%) × pricing_multiplier
+```
 
-Scenarios are stored in `data/scenarios.json` (ignored by git).
+| Model     | Multiplier |
+|-----------|-----------|
+| On-Demand | 1.00      |
+| Reserved  | 0.72      |
+| Spot      | 0.35      |
 
-## Formula
+## Why vanilla JS?
 
-For each resource row:
+This project intentionally has no framework. For a single-page tool that amounts to a fancy calculator, adding React/Vue/Svelte adds more complexity than it removes. The whole thing is ~500 lines of HTML/CSS/JS. You can read every line and understand exactly what it does.
 
-`monthly_cost = qty * units_per_month * unit_price * (1 - discount%) * pricing_model_multiplier`
+## Stack
 
-Pricing model multipliers:
-
-- `On-Demand = 1.00`
-- `Reserved = 0.72`
-- `Spot = 0.35`
+Frontend: HTML, CSS, JavaScript (zero deps).  
+Backend (optional): Node.js, Express, JSON file storage.
