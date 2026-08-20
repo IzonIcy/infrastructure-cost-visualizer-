@@ -86,7 +86,6 @@ try {
   const delRes = await fetch(`${base}/api/scenarios/${id}`, { method: "DELETE" });
   assert(delRes.status === 204, "delete scenario failed");
 
-  // eslint-disable-next-line no-console
   console.log("Smoke test passed");
 } finally {
   server.close();
