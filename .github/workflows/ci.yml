@@ -25,10 +25,10 @@ jobs:
         run: npm ci
 
       - name: Lint
-        run: npx eslint . || true
+        run: npx eslint .
 
       - name: Smoke test
         run: node server/smoke.js
 
       - name: Test
-        run: npm test || true
+        run: npm test
