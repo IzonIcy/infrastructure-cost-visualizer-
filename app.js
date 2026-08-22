@@ -78,6 +78,11 @@ const els = {
   recommendationList: document.getElementById("recommendationList"),
   saveServerBtn: document.getElementById("saveServerBtn"),
   loadServerBtn: document.getElementById("loadServerBtn"),
+  shareBtn: document.getElementById("shareBtn"),
+  compareBtn: document.getElementById("compareBtn"),
+  comparePanel: document.getElementById("comparePanel"),
+  compareSummary: document.getElementById("compareSummary"),
+  compareBody: document.getElementById("compareBody"),
 };
 
 let currentDisplayCurrency = BASE_CURRENCY;
@@ -386,70 +391,6 @@ async function loadScenarioFromServer() {
   } finally {
     els.loadServerBtn.disabled = false;
   }
-}
-
-function csvEscape(value) {
-  const raw = String(value ?? "");
-  if (/[",\n\r]/.test(raw)) {
-    return `"${raw.replace(/"/g, '""')}"`;
-  }
-  return raw;
-}
-
-function parseCsvContent(content) {
-  const rows = [];
-  let row = [];
-  let field = "";
-  let inQuotes = false;
-
-  for (let index = 0; index < content.length; index += 1) {
-    const char = content[index];
-    const next = content[index + 1];
-
-    if (char === '"') {
-      if (inQuotes && next === '"') {
-        field += '"';
-        index += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (!inQuotes && char === ",") {
-      row.push(field);
-      field = "";
-      continue;
-    }
-
-    if (!inQuotes && (char === "\n" || char === "\r")) {
-      if (char === "\r" && next === "\n") {
-        index += 1;
-      }
-      row.push(field);
-      if (row.some((cell) => String(cell).trim() !== "")) {
-        rows.push(row);
-      }
-      row = [];
-      field = "";
-      continue;
-    }
-
-    field += char;
-  }
-
-  if (inQuotes) {
-    throw new Error("CSV contains an unterminated quoted field.");
-  }
-
-  if (field !== "" || row.length) {
-    row.push(field);
-    if (row.some((cell) => String(cell).trim() !== "")) {
-      rows.push(row);
-    }
-  }
-
-  return rows;
 }
 
 function exportRowsAsCsv() {
@@ -1050,6 +991,22 @@ function handleCurrencyChange() {
 }
 
 function hydrate() {
+  // A shared link (#s=...) wins over localStorage so the recipient sees the
+  // shared snapshot; afterwards it is stripped and normal editing resumes.
+  const shared = decodeShareState(window.location.hash);
+  if (shared) {
+    applyScenarioState({
+      scenarioName: shared.scenarioName,
+      monthlyBudget: shared.monthlyBudget,
+      growthRate: shared.growthRate,
+      currency: shared.currency,
+      rows: shared.rows,
+    });
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+    setImportStatus("Loaded shared worksheet from link.", "success");
+    return;
+  }
+
   const state = loadState();
   if (state) {
     applyScenarioState({
@@ -1063,6 +1020,131 @@ function hydrate() {
   }
 
   resetApp();
+}
+
+function currentShareState() {
+  return {
+    rows: getRowsFromUI({ currency: BASE_CURRENCY }),
+    currency: BASE_CURRENCY,
+    growthRate: Number.parseFloat(els.growthRate.value) || 0,
+    scenarioName: sanitizeScenarioName(els.scenarioName.value),
+    monthlyBudget: readBudgetFromUi(BASE_CURRENCY),
+  };
+}
+
+async function shareCurrentScenario() {
+  try {
+    const hash = encodeShareState(currentShareState());
+    const url = `${window.location.origin}${window.location.pathname}${hash}`;
+    await navigator.clipboard.writeText(url);
+    setImportStatus("Shareable link copied to clipboard.", "success");
+  } catch (error) {
+    setImportStatus(
+      `Could not copy link (${error instanceof Error ? error.message : "unknown"}).`,
+      "error",
+    );
+  }
+}
+
+async function openComparison() {
+  if (!isServedOverHttp()) {
+    setImportStatus("Comparing saved scenarios needs the backend (npm run dev).", "error");
+    return;
+  }
+
+  let items;
+  try {
+    const response = await apiFetch("/api/scenarios");
+    items = response?.items ?? [];
+  } catch (error) {
+    setImportStatus(
+      `Could not load scenarios (${error instanceof Error ? error.message : "unknown"}).`,
+      "error",
+    );
+    return;
+  }
+
+  els.comparePanel.hidden = false;
+  els.compareBody.innerHTML = "";
+  els.compareSummary.textContent =
+    items.length === 0
+      ? "No saved scenarios found — save one with “Save Scenario” first."
+      : "Pick a saved scenario to compare against the current sheet.";
+
+  const existingSelect = document.getElementById("compareSelect");
+  const existingRun = document.getElementById("compareRunBtn");
+  if (existingSelect) existingSelect.remove();
+  if (existingRun) existingRun.remove();
+
+  if (items.length === 0) return;
+
+  const select = document.createElement("select");
+  select.id = "compareSelect";
+  select.setAttribute("aria-label", "Saved scenario to compare against");
+  for (const item of items) {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = `${item.name} (updated ${String(item.updatedAt || "").slice(0, 10)})`;
+    select.appendChild(option);
+  }
+  select.style.marginRight = "8px";
+
+  const runButton = document.createElement("button");
+  runButton.id = "compareRunBtn";
+  runButton.type = "button";
+  runButton.className = "btn btn-primary";
+  runButton.textContent = "Compare against selected";
+
+  runButton.addEventListener("click", async () => {
+    try {
+      const detail = await apiFetch(`/api/scenarios/${select.value}`);
+      renderComparison(detail?.item ?? null);
+    } catch (error) {
+      setImportStatus(
+        `Could not load scenario (${error instanceof Error ? error.message : "unknown"}).`,
+        "error",
+      );
+    }
+  });
+
+  els.compareSummary.after(select, runButton);
+}
+
+function renderComparison(savedItem) {
+  if (!savedItem || !Array.isArray(savedItem.rows)) {
+    setImportStatus("Selected scenario has no rows to compare.", "error");
+    return;
+  }
+
+  const currentRows = getRowsFromUI({ currency: currentDisplayCurrency });
+  const savedRows = normalizeRows(savedItem.rows);
+  const currentByService = aggregateByKey(currentRows, "service");
+  const savedByService = aggregateByKey(savedRows, "service");
+
+  const names = [...new Set([...currentByService.keys(), ...savedByService.keys()])].sort();
+  const fmt = (amount) => formatCurrency(amount, currentDisplayCurrency);
+
+  els.compareBody.innerHTML = "";
+  let totalDelta = 0;
+  for (const service of names) {
+    const currentCost = currentByService.get(service) ?? 0;
+    const savedCost = savedByService.get(service) ?? 0;
+    const delta = currentCost - savedCost;
+    totalDelta += delta;
+
+    const tr = document.createElement("tr");
+    const deltaText = `${delta >= 0 ? "+" : ""}${fmt(delta)}`;
+    tr.innerHTML = `
+      <td>${csvEscape(service)}</td>
+      <td>${fmt(currentCost)}</td>
+      <td>${fmt(savedCost)}</td>
+      <td style="color:${delta > 0 ? "#e05252" : delta < 0 ? "#1a7f37" : "inherit"}">${deltaText}</td>
+    `;
+    els.compareBody.appendChild(tr);
+  }
+
+  els.comparePanel.hidden = false;
+  els.compareSummary.textContent = `Current sheet vs “${savedItem.name ?? "saved scenario"}” — total Δ ${totalDelta >= 0 ? "+" : ""}${fmt(totalDelta)} per month.`;
 }
 
 els.addRowBtn.addEventListener("click", () => {
@@ -1090,6 +1172,8 @@ els.exportBtn.addEventListener("click", exportRowsAsCsv);
 els.importBtn.addEventListener("click", () => els.importFile.click());
 els.saveServerBtn.addEventListener("click", saveScenarioToServer);
 els.loadServerBtn.addEventListener("click", loadScenarioFromServer);
+els.shareBtn.addEventListener("click", shareCurrentScenario);
+els.compareBtn.addEventListener("click", openComparison);
 els.dropZone.addEventListener("click", () => els.importFile.click());
 els.dropZone.addEventListener("keydown", (event) => {
   if (event.key === "Enter" || event.key === " ") {

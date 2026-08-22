@@ -16,7 +16,22 @@ export default [
     // Browser dashboard code
     files: ["app.js"],
     languageOptions: {
-      globals: globals.browser,
+      globals: {
+        ...globals.browser,
+        // Provided by csv.js / shareState.js classic scripts loaded before app.js.
+        csvEscape: "readonly",
+        parseCsvContent: "readonly",
+        encodeShareState: "readonly",
+        decodeShareState: "readonly",
+      },
+    },
+  },
+  {
+    // Dual-environment helpers: loaded as classic scripts in the browser,
+    // CommonJS-required by tests.
+    files: ["csv.js", "shareState.js"],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node },
     },
   },
   {

@@ -15,7 +15,17 @@ export function createApp({ repoRoot }) {
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: "same-site" },
-      contentSecurityPolicy: false
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", "data:"],
+          connectSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+        },
+      },
     })
   );
 

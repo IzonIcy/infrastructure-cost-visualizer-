@@ -777,3 +777,20 @@ canvas {
     height: clamp(190px, 58vw, 260px);
   }
 }
+
+.compare-panel {
+  margin-top: 1.25rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid rgba(120, 140, 170, 0.28);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.compare-panel h2 {
+  margin: 0 0 0.5rem;
+}
+
+.compare-summary {
+  color: var(--muted, #5b6b7f);
+  margin: 0 0 0.75rem;
+}

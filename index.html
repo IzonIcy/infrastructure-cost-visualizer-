@@ -97,6 +97,12 @@
             >
               Load Saved
             </button>
+            <button id="shareBtn" class="btn btn-ghost" type="button" title="Copy a shareable link to this worksheet">
+              Share Link
+            </button>
+            <button id="compareBtn" class="btn btn-ghost" type="button" title="Compare current sheet against a saved scenario">
+              Compare…
+            </button>
             <button id="resetBtn" class="btn btn-ghost" type="button">Reset Sheet</button>
             <input id="importFile" type="file" accept=".csv,text/csv" hidden />
           </div>
@@ -120,6 +126,19 @@
           Drop a CSV here or click to import a saved worksheet
         </div>
         <p id="importStatus" class="import-status" aria-live="polite"></p>
+
+        <section id="comparePanel" class="compare-panel" hidden aria-label="Scenario comparison">
+          <h2>Scenario comparison</h2>
+          <p id="compareSummary" class="compare-summary"></p>
+          <div class="table-wrap">
+            <table id="compareTable">
+              <thead>
+                <tr><th>Line item</th><th>Current</th><th>Saved</th><th>Δ / month</th></tr>
+              </thead>
+              <tbody id="compareBody"></tbody>
+            </table>
+          </div>
+        </section>
 
         <div class="table-wrap">
           <table id="resourceTable">
@@ -246,6 +265,8 @@
       </tr>
     </template>
 
+    <script src="csv.js"></script>
+    <script src="shareState.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
