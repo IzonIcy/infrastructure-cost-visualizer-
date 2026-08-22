@@ -26,5 +26,8 @@
     "husky": "^9.1.7",
     "vitest": "^4.1.10"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "packageManager": "pnpm@10.31.0"
 }
