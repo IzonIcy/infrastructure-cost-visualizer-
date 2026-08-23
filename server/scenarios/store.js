@@ -38,6 +38,20 @@ export function createScenarioStore({ repoRoot }) {
   const dataDir = path.join(repoRoot, "data");
   const dbPath = path.join(dataDir, "scenarios.json");
 
+  // Every mutation is read-modify-write of the whole file. Concurrent
+  // requests interleave those steps, so the last writer silently discards
+  // everyone else's change (atomic rename prevents corruption, not lost
+  // updates). Serialize mutations through a single promise chain — reads
+  // stay lock-free.
+  let writeQueue = Promise.resolve();
+
+  function withWriteLock(task) {
+    const run = writeQueue.then(task, task);
+    // Keep the chain alive after a failure; callers still get the error.
+    writeQueue = run.catch(() => {});
+    return run;
+  }
+
   async function loadDb() {
     const db = await readJson(dbPath);
     if (!db || !Array.isArray(db.items)) return { items: [] };
@@ -66,37 +80,43 @@ export function createScenarioStore({ repoRoot }) {
       return db.items.find((x) => x.id === id) || null;
     },
 
-    async create(payload) {
-      const db = await loadDb();
+    create(payload) {
+      return withWriteLock(async () => {
+        const db = await loadDb();
       const item = {
         id: createId(),
         ...payload,
         createdAt: nowIso(),
         updatedAt: nowIso()
       };
-      db.items.unshift(item);
-      await saveDb(db);
-      return item;
+        db.items.unshift(item);
+        await saveDb(db);
+        return item;
+      });
     },
 
-    async update(id, patch) {
-      const db = await loadDb();
-      const idx = db.items.findIndex((x) => x.id === id);
-      if (idx === -1) return null;
-      const updated = { ...db.items[idx], ...patch, updatedAt: nowIso() };
-      db.items.splice(idx, 1);
-      db.items.unshift(updated);
-      await saveDb(db);
-      return updated;
+    update(id, patch) {
+      return withWriteLock(async () => {
+        const db = await loadDb();
+        const idx = db.items.findIndex((x) => x.id === id);
+        if (idx === -1) return null;
+        const updated = { ...db.items[idx], ...patch, updatedAt: nowIso() };
+        db.items.splice(idx, 1);
+        db.items.unshift(updated);
+        await saveDb(db);
+        return updated;
+      });
     },
 
-    async remove(id) {
-      const db = await loadDb();
-      const next = db.items.filter((x) => x.id !== id);
-      if (next.length === db.items.length) return false;
-      db.items = next;
-      await saveDb(db);
-      return true;
+    remove(id) {
+      return withWriteLock(async () => {
+        const db = await loadDb();
+        const next = db.items.filter((x) => x.id !== id);
+        if (next.length === db.items.length) return false;
+        db.items = next;
+        await saveDb(db);
+        return true;
+      });
     }
   };
 }

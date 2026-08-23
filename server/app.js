@@ -10,7 +10,12 @@ export function createApp({ repoRoot }) {
   };
 
   app.disable("x-powered-by");
-  app.set("trust proxy", true);
+  // Trust proxy headers only when actually deployed behind one. Enabled
+  // unconditionally, any client could spoof X-Forwarded-For on a direct
+  // connection — harmless today, wrong the moment client IPs matter.
+  if (process.env.TRUST_PROXY === "1") {
+    app.set("trust proxy", true);
+  }
 
   app.use(
     helmet({

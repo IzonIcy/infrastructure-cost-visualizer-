@@ -546,7 +546,9 @@ function renderRow(row) {
 
 function renderRows(rows) {
   els.resourceBody.innerHTML = "";
-  rows.forEach((row) => renderRow(row));
+  for (const row of rows) {
+    renderRow(row);
+  }
 }
 
 function addRow(row) {
