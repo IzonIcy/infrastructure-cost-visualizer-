@@ -160,10 +160,7 @@ function formatInputNumber(value, maxFractionDigits = 2) {
 }
 
 function convertCurrency(amount, fromCurrency, toCurrency) {
-  const safeFrom = exchangeRates[fromCurrency] ? fromCurrency : BASE_CURRENCY;
-  const safeTo = exchangeRates[toCurrency] ? toCurrency : BASE_CURRENCY;
-  const usdAmount = toNumber(amount) / exchangeRates[safeFrom];
-  return usdAmount * exchangeRates[safeTo];
+  return calcConvertCurrency(amount, fromCurrency, toCurrency, exchangeRates);
 }
 
 function toBaseCurrency(amount, fromCurrency = currentDisplayCurrency) {
@@ -507,10 +504,7 @@ function readRow(tr, { currency = currentDisplayCurrency } = {}) {
 }
 
 function monthlyCost(row) {
-  const base = row.qty * row.units * row.price;
-  const discountFactor = 1 - clamp(row.discount, 0, 100) / 100;
-  const modelFactor = modelMultipliers[row.model] ?? 1;
-  return base * discountFactor * modelFactor;
+  return calcMonthlyCost(row, modelMultipliers);
 }
 
 function formatDisplayPrice(usdPrice) {
@@ -870,12 +864,12 @@ function recalculateAndRender() {
   const currency = currentDisplayCurrency;
   const growthRate = clamp(toNumber(els.growthRate.value, DEFAULT_GROWTH_RATE), -10, 25);
   const budgetUsd = readBudgetFromUi(currency);
-  const scenarioName = sanitizeScenarioName(els.scenarioName.value);
 
   els.growthRate.value = String(growthRate);
   els.growthValue.value = `${growthRate}%`;
   els.growthValue.textContent = `${growthRate}%`;
-  els.scenarioName.value = scenarioName;
+  // Don't write the sanitized name back while typing — it eats trailing
+  // spaces and jumps the caret. Sanitization happens on save/export/share.
 
   const costsByRow = rows.map((row) => monthlyCost(row));
   [...els.resourceBody.querySelectorAll("tr")].forEach((tr, index) => {
@@ -1119,12 +1113,16 @@ function renderComparison(savedItem) {
   }
 
   const currentRows = getRowsFromUI({ currency: currentDisplayCurrency });
-  const savedRows = normalizeRows(savedItem.rows);
+  // Saved scenarios store prices in base USD; treat them as such so the
+  // comparison doesn't re-convert them as if they were display currency.
+  const savedRows = normalizeRows(savedItem.rows, {
+    amountsInBaseCurrency: true,
+  });
   const currentByService = aggregateByKey(currentRows, "service");
   const savedByService = aggregateByKey(savedRows, "service");
 
   const names = [...new Set([...currentByService.keys(), ...savedByService.keys()])].sort();
-  const fmt = (amount) => formatCurrency(amount, currentDisplayCurrency);
+  const fmt = (amount) => formatCurrency(fromBaseCurrency(amount), currentDisplayCurrency);
 
   els.compareBody.innerHTML = "";
   let totalDelta = 0;
@@ -1134,14 +1132,24 @@ function renderComparison(savedItem) {
     const delta = currentCost - savedCost;
     totalDelta += delta;
 
+    // Service names come from the server/imported files — build cells via
+    // textContent so they can't inject markup.
     const tr = document.createElement("tr");
-    const deltaText = `${delta >= 0 ? "+" : ""}${fmt(delta)}`;
-    tr.innerHTML = `
-      <td>${csvEscape(service)}</td>
-      <td>${fmt(currentCost)}</td>
-      <td>${fmt(savedCost)}</td>
-      <td style="color:${delta > 0 ? "#e05252" : delta < 0 ? "#1a7f37" : "inherit"}">${deltaText}</td>
-    `;
+    const cells = [
+      { text: service },
+      { text: fmt(currentCost) },
+      { text: fmt(savedCost) },
+      {
+        text: `${delta >= 0 ? "+" : ""}${fmt(delta)}`,
+        color: delta > 0 ? "#e05252" : delta < 0 ? "#1a7f37" : "inherit",
+      },
+    ];
+    for (const cell of cells) {
+      const td = document.createElement("td");
+      td.textContent = cell.text;
+      if (cell.color) td.style.color = cell.color;
+      tr.appendChild(td);
+    }
     els.compareBody.appendChild(tr);
   }
 

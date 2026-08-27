@@ -33,8 +33,8 @@ npx serve .
 ### Optional backend for saving scenarios
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Then `http://localhost:3000`.
